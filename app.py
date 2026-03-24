@@ -491,6 +491,7 @@ class TTUOracle:
             return None
     
     def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
+        
         """
         Apprend un document en le découpant en chunks naturels (paragraphes groupés).
         progress_callback est une fonction optionnelle pour mettre à jour une barre de progression.
@@ -522,7 +523,7 @@ class TTUOracle:
             total_chunks = len(chunks)
             for i, chunk in enumerate(chunks):
                 if progress_callback:
-                    progress_callback(i, total_chunks)
+                    progress_callback(i, len(chunks))
                 if chunk.strip():
                     chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
                     chunk_id = self.learn(chunk[:5000],
