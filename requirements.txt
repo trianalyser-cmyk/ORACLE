@@ -1,0 +1,8 @@
+streamlit
+supabase
+sentence-transformers
+numpy
+pandas
+PyPDF2
+python-docx
+openpyxl # pour Excel
