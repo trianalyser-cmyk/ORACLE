@@ -50,8 +50,8 @@ class Config:
     ALPHA_D = 0.1
     ATTRACTOR_RADIUS = 1.0
     MAX_ITERATIONS = 50
-    EMBEDDING_DIM = 128
-    CHUNK_SIZE = 1000
+    EMBEDDING_DIM = 128 # Dimension de chaque vecteur phi_M et phi_C
+    CHUNK_SIZE = 1000 # Taille approximative des chunks en caractères
 
 # ==========================================
 # ANALYSEUR MULTI-NIVEAUX
@@ -254,9 +254,6 @@ class TriadicFlow:
         return vec
     
     def flow_equations(self, state: TriadicState, dt: float = 0.01) -> TriadicState:
-        """
-        Équations de flot corrigées avec attracteur de cercle.
-        """
         try:
             # Équations différentielles originales
             dM = [-self.alpha_M * m + self.alpha_C * c + self.alpha_D * state.phi_D 
@@ -275,16 +272,14 @@ class TriadicFlow:
             # Force d'attracteur vers le cercle unité
             r = self._norm(new_M) + self._norm(new_C)
             if r > 1e-6:
-                # Correction proportionnelle à l'écart par rapport à 1
                 correction_factor = 1.0 + self.alpha_D * (1.0 - r) * dt * 10
                 new_M = [m * correction_factor for m in new_M]
                 new_C = [c * correction_factor for c in new_C]
 
-            # Renormalisation finale pour garantir la stabilité
+            # Renormalisation finale
             new_M = self._normalize(new_M)
             new_C = self._normalize(new_C)
 
-            # Ajustement supplémentaire pour éviter la dérive
             current_r = self._norm(new_M) + self._norm(new_C)
             if current_r < 0.95 or current_r > 1.05:
                 final_factor = 1.0 / current_r
@@ -322,10 +317,8 @@ class TriadicFlow:
     def attractor_projection(self, state: TriadicState) -> Tuple[float, float]:
         try:
             if state.phi_M and state.phi_C:
-                # Projection sur le cercle unité via les premières composantes
                 cos_theta = state.phi_M[0] / self.radius if self.radius > 0 else 0.0
                 sin_theta = state.phi_C[0] / self.radius if self.radius > 0 else 0.0
-                # Normalisation pour rester sur le cercle
                 norm = np.sqrt(cos_theta**2 + sin_theta**2)
                 if norm > 1e-6:
                     cos_theta /= norm
@@ -341,7 +334,6 @@ class TriadicFlow:
 # ==========================================
 class TTUOracle:
     def __init__(self):
-        # Initialisation du modèle d'embedding
         self.model = None
         if TRANSFORMER_AVAILABLE:
             try:
@@ -353,7 +345,6 @@ class TTUOracle:
         self.analyzer = MultiLevelAnalyzer()
         self.extractor = FileExtractor()
         
-        # Connexion Supabase
         self.supabase: Client = create_client(
             st.secrets["SUPABASE_URL"],
             st.secrets["SUPABASE_KEY"]
@@ -365,12 +356,10 @@ class TTUOracle:
         self._load_memory()
     
     def _load_memory(self):
-        """Charge tous les cycles depuis Supabase."""
         try:
             response = self.supabase.table("knowledge").select("*").execute()
             for row in response.data:
                 try:
-                    # Conversion des vecteurs stockés au format texte
                     phi_m = self._parse_vector(row.get('phi_m'))
                     phi_c = self._parse_vector(row.get('phi_c'))
                     analysis = row.get('metadata', {})
@@ -392,49 +381,48 @@ class TTUOracle:
             st.error(f"Erreur chargement depuis Supabase: {e}")
     
     def _parse_vector(self, vec_data):
-        """Convertit une chaîne de type '[0.1,0.2,...]' en liste de floats."""
         if vec_data is None:
-            return [0.0] * (Config.EMBEDDING_DIM // 2)
+            return [0.0] * Config.EMBEDDING_DIM
         if isinstance(vec_data, list):
+            # S'assurer de la bonne dimension
+            if len(vec_data) != Config.EMBEDDING_DIM:
+                vec_data = (vec_data + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
             return vec_data
         if isinstance(vec_data, str):
             try:
-                # Supprimer les crochets et splitter
                 vec_str = vec_data.strip('[]')
-                return [float(x) for x in vec_str.split(',') if x.strip()]
+                vec = [float(x) for x in vec_str.split(',') if x.strip()]
+                if len(vec) != Config.EMBEDDING_DIM:
+                    vec = (vec + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
+                return vec
             except:
-                return [0.0] * (Config.EMBEDDING_DIM // 2)
-        return [0.0] * (Config.EMBEDDING_DIM // 2)
+                return [0.0] * Config.EMBEDDING_DIM
+        return [0.0] * Config.EMBEDDING_DIM
     
     def _encode_text_with_analysis(self, text: str, analysis: Dict = None) -> Tuple[List[float], List[float], float]:
         try:
+            # Génération de l'embedding brut
             if self.model:
-                embedding = self.model.encode(text[:500])
-                if len(embedding) > Config.EMBEDDING_DIM:
-                    embedding = embedding[:Config.EMBEDDING_DIM]
-                elif len(embedding) < Config.EMBEDDING_DIM:
-                    embedding = np.pad(embedding, (0, Config.EMBEDDING_DIM - len(embedding)))
+                embedding_raw = self.model.encode(text[:500])
             else:
                 hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
                 np.random.seed(hash_val % 2**32)
-                embedding = np.random.randn(Config.EMBEDDING_DIM)
+                embedding_raw = np.random.randn(256)
             
-            if analysis:
-                features = np.array([
-                    analysis.get("words", {}).get("lexical_diversity", 0),
-                    analysis.get("sentences", {}).get("avg_sentence_length", 0) / 50,
-                    analysis.get("letters", {}).get("vowel_consonant_ratio", 0),
-                    min(1.0, analysis.get("structure", {}).get("total_paragraphs", 0) / 100)
-                ])
-                if len(features) < len(embedding):
-                    embedding[:len(features)] = embedding[:len(features)] * (1 + features)
+            # Création de deux vecteurs de taille Config.EMBEDDING_DIM (128)
+            phi_M = embedding_raw[:Config.EMBEDDING_DIM].tolist()
+            if len(embedding_raw) >= 2 * Config.EMBEDDING_DIM:
+                phi_C = embedding_raw[Config.EMBEDDING_DIM:2*Config.EMBEDDING_DIM].tolist()
+            else:
+                phi_C = np.roll(phi_M, 10).tolist()
             
-            split = Config.EMBEDDING_DIM // 2
-            phi_M = embedding[:split].tolist()
-            phi_C = embedding[split:].tolist()
-            phi_D = float(np.mean(embedding))
+            # Padding si nécessaire
+            phi_M = (phi_M + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
+            phi_C = (phi_C + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
             
-            # Normalisation pour qu'ils soient sur le cercle unité
+            phi_D = float(np.mean(embedding_raw))
+            
+            # Normalisation sur la sphère unité
             norm_M = np.sqrt(sum(v*v for v in phi_M))
             norm_C = np.sqrt(sum(v*v for v in phi_C))
             if norm_M > 0:
@@ -442,9 +430,24 @@ class TTUOracle:
             if norm_C > 0:
                 phi_C = [v / norm_C for v in phi_C]
             
+            # Intégration de l'analyse multi-niveaux
+            if analysis:
+                features = np.array([
+                    analysis.get("words", {}).get("lexical_diversity", 0),
+                    analysis.get("sentences", {}).get("avg_sentence_length", 0) / 50,
+                    analysis.get("letters", {}).get("vowel_consonant_ratio", 0),
+                    min(1.0, analysis.get("structure", {}).get("total_paragraphs", 0) / 100)
+                ])
+                for i, f in enumerate(features):
+                    if i < len(phi_M):
+                        phi_M[i] = phi_M[i] * (1 + f * 0.1)
+                    if i < len(phi_C):
+                        phi_C[i] = phi_C[i] * (1 + f * 0.1)
+            
             return phi_M, phi_C, phi_D
-        except:
-            return [0.0] * (Config.EMBEDDING_DIM // 2), [0.0] * (Config.EMBEDDING_DIM // 2), 0.5
+        except Exception as e:
+            print(f"Erreur encodage: {e}")
+            return [0.0]*Config.EMBEDDING_DIM, [0.0]*Config.EMBEDDING_DIM, 0.5 
     
     def learn(self, text: str, source: str = "text", analysis: Dict = None) -> Optional[str]:
         try:
@@ -459,7 +462,6 @@ class TTUOracle:
             coherence = 1.0 - abs(attractor[0]) - abs(attractor[1])
             coherence = max(0.0, min(1.0, coherence))
             
-            # Préparer les données pour Supabase
             data = {
                 "content": text[:5000],
                 "source": source,
@@ -469,10 +471,13 @@ class TTUOracle:
                 "attractor_cos": attractor[0],
                 "attractor_sin": attractor[1],
                 "coherence": coherence,
-                "metadata": analysis
+                "metadata": analysis,
+                "word_count": analysis.get("words", {}).get("total_words", 0),
+                "sentence_count": analysis.get("sentences", {}).get("total_sentences", 0),
+                "letter_count": analysis.get("letters", {}).get("total_letters", 0),
+                "main_themes": json.dumps(analysis.get("context", {}).get("main_themes", []))
             }
             
-            # Insertion
             response = self.supabase.table("knowledge").insert(data).execute()
             if response.data:
                 cycle_id = response.data[0]['id']
@@ -485,39 +490,52 @@ class TTUOracle:
             st.error(f"Erreur d'apprentissage: {e}")
             return None
     
-    def learn_document(self, uploaded_file) -> Dict[str, Any]:
+    def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
+        """
+        Apprend un document en le découpant en chunks naturels (paragraphes groupés).
+        progress_callback est une fonction optionnelle pour mettre à jour une barre de progression.
+        """
         try:
             text, metadata = self.extractor.extract_text(uploaded_file)
-            
             if not text.strip():
                 return {"success": False, "error": "Texte vide", "cycles": []}
             
-            full_analysis = self.analyzer.full_analysis(text[:5000])
-            cycle_id = self.learn(text[:5000], source=uploaded_file.name, analysis=full_analysis)
+            # Découpage en paragraphes
+            paragraphs = re.split(r'\n\s*\n', text)
+            paragraphs = [p.strip() for p in paragraphs if p.strip()]
             
-            chunks = self.extractor.extract_by_chunks(uploaded_file)
+            # Regroupement en chunks de taille raisonnable
+            chunks = []
+            current_chunk = ""
+            for para in paragraphs:
+                if len(current_chunk) + len(para) < Config.CHUNK_SIZE:
+                    current_chunk += para + "\n\n"
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = para + "\n\n"
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            
+            # Apprentissage de chaque chunk
             chunk_cycles = []
-            
-            for i, chunk in enumerate(chunks[:5]):
+            total_chunks = len(chunks)
+            for i, chunk in enumerate(chunks):
+                if progress_callback:
+                    progress_callback(i, total_chunks)
                 if chunk.strip():
                     chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
-                    chunk_id = self.learn(chunk[:5000], source=f"{uploaded_file.name} (chunk {i+1})", analysis=chunk_analysis)
-                    if chunk_id:
-                        chunk_cycles = []
-            
-            for i, chunk in enumerate(chunks[:5]):
-                if chunk.strip():
-                    chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
-                    chunk_id = self.learn(chunk[:5000], source=f"{uploaded_file.name} (chunk {i+1})", analysis=chunk_analysis)
+                    chunk_id = self.learn(chunk[:5000],
+                                          source=f"{uploaded_file.name} (chunk {i+1})",
+                                          analysis=chunk_analysis)
                     if chunk_id:
                         chunk_cycles.append(chunk_id)
             
             return {
                 "success": True,
-                "cycles": [cycle_id] if cycle_id else [],
-                "chunk_cycles": chunk_cycles,
+                "cycles": chunk_cycles,
                 "metadata": metadata,
-                "analysis": full_analysis,
+                "analysis": self.analyzer.full_analysis(text[:5000]),
                 "total_chunks": len(chunks)
             }
         except Exception as e:
@@ -534,10 +552,8 @@ class TTUOracle:
         self.global_coherence = coherence_sum / len(self.cycles)
     
     def search(self, query: str, top_k: int = 3) -> List[dict]:
-        """Recherche vectorielle utilisant la fonction match_knowledge_triadic."""
         try:
             phi_M_q, phi_C_q, _ = self._encode_text_with_analysis(query)
-            # Appel de la fonction RPC
             response = self.supabase.rpc(
                 'match_knowledge_triadic',
                 {
@@ -553,7 +569,7 @@ class TTUOracle:
                 results.append({
                     "id": row['id'],
                     "similarity": row['combined_similarity'],
-                    "attractor": None  # on peut récupérer plus tard si besoin
+                    "attractor": None
                 })
             return results
         except Exception as e:
@@ -565,7 +581,6 @@ class TTUOracle:
         if not results:
             return {"response": "Aucune connaissance trouvée.", "coherence": 0.0, "sources": [], "analysis": {}}
         
-        # Récupérer les contenus depuis Supabase
         knowledge = []
         for r in results[:2]:
             try:
@@ -773,33 +788,45 @@ def main():
                 st.info(f"Fichier: {uploaded_file.name}")
                 
                 if st.button("📚 Apprendre le document", type="primary", key="learn_doc_btn"):
-                    with st.spinner("Extraction, analyse multi-niveaux et convergence..."):
-                        result = oracle.learn_document(uploaded_file)
-                        if result["success"]:
-                            st.success(f"✅ Document appris: {len(result['cycles'])} cycles principaux + {len(result['chunk_cycles'])} chunks")
-                            st.info(f"📊 Métadonnées: {result['metadata']}")
-                            
-                            analysis = result.get("analysis", {})
-                            with st.expander("📊 Analyse multi-niveaux du document"):
-                                col_a, col_b, col_c = st.columns(3)
-                                with col_a:
-                                    st.write("**Lettres**")
-                                    st.write(f"Total: {analysis.get('letters', {}).get('total_letters', 0)}")
-                                    st.write(f"Voyelles: {analysis.get('letters', {}).get('vowels', 0)}")
-                                with col_b:
-                                    st.write("**Mots**")
-                                    st.write(f"Total: {analysis.get('words', {}).get('total_words', 0)}")
-                                    themes = analysis.get('context', {}).get('main_themes', [])
-                                    if themes:
-                                        st.write("**Thèmes:**")
-                                        for t in themes[:3]:
-                                            st.write(f"- {t[0]}")
-                                with col_c:
-                                    st.write("**Structure**")
-                                    st.write(f"Paragraphes: {analysis.get('structure', {}).get('total_paragraphs', 0)}")
-                                    st.write(f"Phrases: {analysis.get('sentences', {}).get('total_sentences', 0)}")
-                        else:
-                            st.error(f"Erreur: {result.get('error', 'Inconnue')}")
+                    # Barre de progression personnalisée
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    def update_progress(i, total):
+                        progress_bar.progress((i + 1) / total)
+                        status_text.text(f"Traitement chunk {i+1}/{total}")
+                    
+                    with st.spinner("Extraction et découpage..."):
+                        result = oracle.learn_document(uploaded_file, progress_callback=update_progress)
+                    
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    if result["success"]:
+                        st.success(f"✅ Document appris: {len(result['cycles'])} cycles créés")
+                        st.info(f"📊 Métadonnées: {result['metadata']}")
+                        
+                        analysis = result.get("analysis", {})
+                        with st.expander("📊 Analyse multi-niveaux du document"):
+                            col_a, col_b, col_c = st.columns(3)
+                            with col_a:
+                                st.write("**Lettres**")
+                                st.write(f"Total: {analysis.get('letters', {}).get('total_letters', 0)}")
+                                st.write(f"Voyelles: {analysis.get('letters', {}).get('vowels', 0)}")
+                            with col_b:
+                                st.write("**Mots**")
+                                st.write(f"Total: {analysis.get('words', {}).get('total_words', 0)}")
+                                themes = analysis.get('context', {}).get('main_themes', [])
+                                if themes:
+                                    st.write("**Thèmes:**")
+                                    for t in themes[:3]:
+                                        st.write(f"- {t[0]}")
+                            with col_c:
+                                st.write("**Structure**")
+                                st.write(f"Paragraphes: {analysis.get('structure', {}).get('total_paragraphs', 0)}")
+                                st.write(f"Phrases: {analysis.get('sentences', {}).get('total_sentences', 0)}")
+                    else:
+                        st.error(f"Erreur: {result.get('error', 'Inconnue')}")
     
     with tab2:
         st.header("Interrogation Triadique")
