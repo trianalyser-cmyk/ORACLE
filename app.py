@@ -50,8 +50,8 @@ class Config:
     ALPHA_D = 0.1
     ATTRACTOR_RADIUS = 1.0
     MAX_ITERATIONS = 50
-    EMBEDDING_DIM = 128 # Dimension de chaque vecteur phi_M et phi_C
-    CHUNK_SIZE = 1000 # Taille approximative des chunks en caractères
+    EMBEDDING_DIM = 128  # Dimension de chaque vecteur phi_M et phi_C
+    CHUNK_SIZE = 1000    # Taille approximative des chunks en caractères
 
 # ==========================================
 # ANALYSEUR MULTI-NIVEAUX
@@ -490,44 +490,12 @@ class TTUOracle:
             st.error(f"Erreur d'apprentissage: {e}")
             return None
     
-   def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
-    try:
-        text, metadata = self.extractor.extract_text(uploaded_file)
-        
-        if not text.strip():
-            return {"success": False, "error": "Texte vide", "cycles": []}
-        
-        full_analysis = self.analyzer.full_analysis(text[:5000])
-        cycle_id = self.learn(text[:5000], source=uploaded_file.name, analysis=full_analysis)
-        
-        chunks = self.extractor.extract_by_chunks(uploaded_file)
-        chunk_cycles = []
-        
-        # Limiter à 10 chunks pour la performance
-        max_chunks = 10
-        actual_chunks = chunks[:max_chunks]
-        
-        for i, chunk in enumerate(actual_chunks):
-            if chunk.strip():
-                chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
-                chunk_id = self.learn(chunk[:5000], source=f"{uploaded_file.name} (chunk {i+1})", analysis=chunk_analysis)
-                if chunk_id:
-                    chunk_cycles.append(chunk_id)
-                
-                # Mise à jour de la barre de progression si le callback est présent
-                if progress_callback:
-                    progress_callback(i + 1, len(actual_chunks))
-        
-        return {
-            "success": True,
-            "cycles": [cycle_id] if cycle_id else [],
-            "chunk_cycles": chunk_cycles,
-            "metadata": metadata,
-            "analysis": full_analysis,
-            "total_chunks": len(chunks)
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e), "cycles": []}
+    def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
+        try:
+            text, metadata = self.extractor.extract_text(uploaded_file)
+            
+            if not text.strip():
+                return {"success": False, "error": "Texte vide", "cycles": []}
             
             # Découpage en paragraphes
             paragraphs = re.split(r'\n\s*\n', text)
@@ -551,7 +519,7 @@ class TTUOracle:
             total_chunks = len(chunks)
             for i, chunk in enumerate(chunks):
                 if progress_callback:
-                    progress_callback(i, len(chunks))
+                    progress_callback(i, total_chunks)
                 if chunk.strip():
                     chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
                     chunk_id = self.learn(chunk[:5000],
