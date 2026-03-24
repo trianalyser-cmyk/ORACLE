@@ -490,16 +490,44 @@ class TTUOracle:
             st.error(f"Erreur d'apprentissage: {e}")
             return None
     
-    def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
+   def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
+    try:
+        text, metadata = self.extractor.extract_text(uploaded_file)
         
-        """
-        Apprend un document en le découpant en chunks naturels (paragraphes groupés).
-        progress_callback est une fonction optionnelle pour mettre à jour une barre de progression.
-        """
-        try:
-            text, metadata = self.extractor.extract_text(uploaded_file)
-            if not text.strip():
-                return {"success": False, "error": "Texte vide", "cycles": []}
+        if not text.strip():
+            return {"success": False, "error": "Texte vide", "cycles": []}
+        
+        full_analysis = self.analyzer.full_analysis(text[:5000])
+        cycle_id = self.learn(text[:5000], source=uploaded_file.name, analysis=full_analysis)
+        
+        chunks = self.extractor.extract_by_chunks(uploaded_file)
+        chunk_cycles = []
+        
+        # Limiter à 10 chunks pour la performance
+        max_chunks = 10
+        actual_chunks = chunks[:max_chunks]
+        
+        for i, chunk in enumerate(actual_chunks):
+            if chunk.strip():
+                chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
+                chunk_id = self.learn(chunk[:5000], source=f"{uploaded_file.name} (chunk {i+1})", analysis=chunk_analysis)
+                if chunk_id:
+                    chunk_cycles.append(chunk_id)
+                
+                # Mise à jour de la barre de progression si le callback est présent
+                if progress_callback:
+                    progress_callback(i + 1, len(actual_chunks))
+        
+        return {
+            "success": True,
+            "cycles": [cycle_id] if cycle_id else [],
+            "chunk_cycles": chunk_cycles,
+            "metadata": metadata,
+            "analysis": full_analysis,
+            "total_chunks": len(chunks)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "cycles": []}
             
             # Découpage en paragraphes
             paragraphs = re.split(r'\n\s*\n', text)
