@@ -1,5 +1,4 @@
-# app.py - Application Streamlit pour Oracle TTU-MC³ Phase 4
-# (Version unifiée avec moteur intégré)
+# app.py - Application Streamlit avec intégration de corpus (PDF, Word, TXT)
 
 import streamlit as st
 import numpy as np
@@ -11,6 +10,61 @@ import re
 import datetime
 from collections import defaultdict
 from typing import List, Dict, Optional, Tuple, Any
+import io
+import tempfile
+
+# =====================================================================
+# TRAITEMENT DES FICHIERS (extraction de texte)
+# =====================================================================
+
+def extraire_texte_pdf(file_bytes: bytes) -> str:
+    """Extrait le texte d'un fichier PDF."""
+    try:
+        import PyPDF2
+        reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text
+    except ImportError:
+        st.error("PyPDF2 n'est pas installé. Installez-le avec: pip install PyPDF2")
+        return ""
+
+def extraire_texte_docx(file_bytes: bytes) -> str:
+    """Extrait le texte d'un fichier DOCX."""
+    try:
+        import docx
+        doc = docx.Document(io.BytesIO(file_bytes))
+        text = "\n".join([para.text for para in doc.paragraphs])
+        return text
+    except ImportError:
+        st.error("python-docx n'est pas installé. Installez-le avec: pip install python-docx")
+        return ""
+
+def extraire_texte_txt(file_bytes: bytes) -> str:
+    """Extrait le texte d'un fichier TXT."""
+    try:
+        return file_bytes.decode("utf-8", errors="ignore")
+    except:
+        return file_bytes.decode("latin-1", errors="ignore")
+
+def traiter_fichier(uploaded_file) -> str:
+    """Traite un fichier uploadé et retourne son contenu texte."""
+    file_bytes = uploaded_file.getvalue()
+    file_name = uploaded_file.name
+    ext = os.path.splitext(file_name)[1].lower()
+    
+    if ext == ".pdf":
+        return extraire_texte_pdf(file_bytes)
+    elif ext == ".docx":
+        return extraire_texte_docx(file_bytes)
+    elif ext == ".txt":
+        return extraire_texte_txt(file_bytes)
+    else:
+        st.warning(f"Format non supporté : {ext}")
+        return ""
 
 # =====================================================================
 # MODÈLES (reprenant models_phase3.py)
@@ -296,6 +350,7 @@ class OraclePhase3:
     def apprendre(self, text: str, source: str = "direct") -> int:
         if not text.strip() or self.model is None:
             return 0
+        # Découpage en blocs sémantiques (paragraphes)
         blocks = [b.strip() for b in text.split("\n\n") if len(b.strip()) > 30]
         if not blocks:
             blocks = [text.strip()] if len(text.strip()) > 30 else []
@@ -705,10 +760,46 @@ with col_right:
         st.markdown("**Réponse spiralée**")
         st.code(st.session_state.last_answer, language="text")
 
-# Apprentissage
-with st.expander("📚 Injecter un corpus"):
+# =====================================================================
+# INTÉGRATION DE CORPUS (Upload de fichiers)
+# =====================================================================
+
+st.markdown("---")
+st.subheader("📚 Intégrer un corpus complet (PDF, DOCX, TXT)")
+
+with st.container():
+    uploaded_files = st.file_uploader(
+        "Choisir des fichiers (PDF, DOCX, TXT)",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True
+    )
+    
+    if uploaded_files:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        total = len(uploaded_files)
+        total_blocks = 0
+        
+        for i, file in enumerate(uploaded_files):
+            status_text.text(f"Traitement de : {file.name} ({i+1}/{total})")
+            with st.spinner(f"Extraction du texte de {file.name}..."):
+                text = traiter_fichier(file)
+            if text.strip():
+                with st.spinner(f"Indexation de {file.name}..."):
+                    blocks = engine.apprendre(text, source=file.name)
+                    total_blocks += blocks
+                    st.success(f"✅ {file.name} : {blocks} blocs indexés")
+            else:
+                st.warning(f"⚠️ Aucun texte extrait de {file.name}")
+            progress_bar.progress((i + 1) / total)
+        
+        status_text.text(f"Intégration terminée. Total : {total_blocks} blocs indexés.")
+        st.balloons()
+
+# Apprentissage direct (texte)
+with st.expander("✏️ Saisie directe (texte)"):
     with st.form("learn_form"):
-        text = st.text_area("Texte", placeholder="Saisir la substance textuelle brute à indexer...", height=100)
+        text = st.text_area("Texte", placeholder="Saisir la substance textuelle brute à indexer...", height=150)
         submit_learn = st.form_submit_button("Intégrer")
         if submit_learn and text:
             blocks = engine.apprendre(text)
