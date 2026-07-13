@@ -1,965 +1,744 @@
-"""
-ORACLE TTU-MC³ - Version Supabase avec Attracteur Circulaire
-Théorie Triadique Unifiée - Modèle de Cohérence Cubique
-"""
+# app.py - Application Streamlit pour Oracle TTU-MC³ Phase 4
+# (Version unifiée avec moteur intégré)
 
 import streamlit as st
-import os
-import json
-import uuid
-import datetime
-import hashlib
-import re
 import numpy as np
-import pandas as pd
-from typing import List, Dict, Tuple, Optional, Any
-from collections import defaultdict, Counter
+import json
+import sqlite3
+import os
+import uuid
+import re
+import datetime
+from collections import defaultdict
+from typing import List, Dict, Optional, Tuple, Any
 
-# Supabase
-from supabase import create_client, Client
+# =====================================================================
+# MODÈLES (reprenant models_phase3.py)
+# =====================================================================
 
-# Désactiver Plotly si nécessaire (optionnel)
-PLOTLY_AVAILABLE = False
+from dataclasses import dataclass, field
 
-try:
-    from sentence_transformers import SentenceTransformer
-    TRANSFORMER_AVAILABLE = True
-except ImportError:
-    TRANSFORMER_AVAILABLE = False
-
-# Extraction de fichiers
-try:
-    import PyPDF2
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
-
-try:
-    import docx
-    DOCX_AVAILABLE = True
-except ImportError:
-    DOCX_AVAILABLE = False
-
-# ==========================================
-# CONFIGURATION
-# ==========================================
-class Config:
-    CONVERGENCE_THRESHOLD = 1e-6
-    ALPHA_M = 0.618
-    ALPHA_C = 0.382
-    ALPHA_D = 0.1
-    ATTRACTOR_RADIUS = 1.0
-    MAX_ITERATIONS = 50
-    EMBEDDING_DIM = 128  # Dimension de chaque vecteur phi_M et phi_C
-    CHUNK_SIZE = 1000    # Taille approximative des chunks en caractères
-
-# ==========================================
-# ANALYSEUR MULTI-NIVEAUX
-# ==========================================
-class MultiLevelAnalyzer:
-    def __init__(self):
-        self.vowels = set('aeiouyàâäéèêëïîôöùûüÿAEIOUYÀÂÄÉÈÊËÏÎÔÖÙÛÜŸ')
-        
-    def analyze_letters(self, text: str) -> Dict:
-        letters = [c for c in text if c.isalpha()]
-        letter_freq = Counter(letters)
-        vowels_count = sum(1 for c in letters if c in self.vowels)
-        consonants_count = len(letters) - vowels_count
-        return {
-            "total_letters": len(letters),
-            "unique_letters": len(letter_freq),
-            "letter_frequency": dict(letter_freq.most_common(10)),
-            "vowels": vowels_count,
-            "consonants": consonants_count,
-            "vowel_consonant_ratio": vowels_count / max(1, consonants_count)
-        }
+@dataclass
+class CycleSpiral:
+    accumulation: List[str] = field(default_factory=list)
+    desordre: List[str] = field(default_factory=list)
+    complexite: List[str] = field(default_factory=list)
+    retour: List[str] = field(default_factory=list)
+    timestamp: float = field(default_factory=lambda: datetime.datetime.now().timestamp())
+    resonance: float = 0.0
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     
-    def analyze_syllables(self, text: str) -> Dict:
-        words = re.findall(r'\b\w+\b', text.lower())
-        syllables = []
-        for word in words:
-            syl = re.findall(r'[aeiouyàâäéèêëïîôöùûüÿ]+[^aeiouyàâäéèêëïîôöùûüÿ]*', word)
-            syllables.extend(syl)
-        return {
-            "total_syllables": len(syllables),
-            "unique_syllables": len(set(syllables)),
-            "avg_syllables_per_word": len(syllables) / max(1, len(words)),
-            "most_common_syllables": dict(Counter(syllables).most_common(10))
-        }
-    
-    def analyze_words(self, text: str) -> Dict:
-        words = re.findall(r'\b\w+\b', text.lower())
-        word_freq = Counter(words)
-        return {
-            "total_words": len(words),
-            "unique_words": len(word_freq),
-            "lexical_diversity": len(word_freq) / max(1, len(words)),
-            "most_common_words": dict(word_freq.most_common(20)),
-            "avg_word_length": sum(len(w) for w in words) / max(1, len(words))
-        }
-    
-    def analyze_sentences(self, text: str) -> Dict:
-        sentences = re.split(r'[.!?]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        sentence_lengths = [len(s.split()) for s in sentences]
-        return {
-            "total_sentences": len(sentences),
-            "avg_sentence_length": sum(sentence_lengths) / max(1, len(sentences)),
-            "min_sentence_length": min(sentence_lengths) if sentence_lengths else 0,
-            "max_sentence_length": max(sentence_lengths) if sentence_lengths else 0,
-            "sentences": sentences[:10]
-        }
-    
-    def analyze_text_structure(self, text: str) -> Dict:
-        paragraphs = re.split(r'\n\s*\n', text)
-        paragraphs = [p.strip() for p in paragraphs if p.strip()]
-        return {
-            "total_paragraphs": len(paragraphs),
-            "avg_paragraph_length": sum(len(p) for p in paragraphs) / max(1, len(paragraphs)),
-            "total_characters": len(text),
-            "total_lines": text.count('\n') + 1
-        }
-    
-    def analyze_context(self, text: str) -> Dict:
-        words = re.findall(r'\b\w+\b', text.lower())
-        word_freq = Counter(words)
-        themes = word_freq.most_common(15)
-        return {
-            "main_themes": themes,
-            "lexical_richness": len(word_freq) / max(1, len(words))
-        }
-    
-    def full_analysis(self, text: str) -> Dict:
-        return {
-            "letters": self.analyze_letters(text),
-            "syllables": self.analyze_syllables(text),
-            "words": self.analyze_words(text),
-            "sentences": self.analyze_sentences(text),
-            "structure": self.analyze_text_structure(text),
-            "context": self.analyze_context(text)
-        }
+    def est_complet(self) -> bool:
+        return bool(self.accumulation) and bool(self.desordre) and bool(self.complexite) and bool(self.retour)
 
-# ==========================================
-# EXTRACTEUR DE FICHIERS
-# ==========================================
-class FileExtractor:
-    @staticmethod
-    def extract_text(file) -> Tuple[str, Dict]:
-        filename = file.name.lower()
-        file_type = "unknown"
-        text = ""
-        metadata = {"filename": filename, "size": 0}
-        
+@dataclass
+class EntreeDictionnaire:
+    mot_francais: str
+    mot_nzebi: str
+    classe: int = 0
+    definition: str = ""
+    synonymes: List[str] = field(default_factory=list)
+    antonymes: List[str] = field(default_factory=list)
+    analogies_kuma: List[str] = field(default_factory=list)
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+@dataclass
+class RelationSynergie:
+    terme_a: str
+    terme_b: str
+    classe_a: int
+    classe_b: int
+    principe: str
+    intensite: float = 1.0
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+@dataclass
+class CandidateReponse:
+    texte: str
+    source_id: str
+    score: float
+    clan_support: Optional[str] = None
+    proverbe_associe: Optional[str] = None
+
+@dataclass
+class JouteMbomo:
+    question: str
+    candidat_a: CandidateReponse
+    candidat_b: CandidateReponse
+    vainqueur: Optional[str] = None
+    arbitre: str = "muyambili"
+    timestamp: float = field(default_factory=lambda: datetime.datetime.now().timestamp())
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+@dataclass
+class MemoireLongTerme:
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    contenu: str = ""
+    embedding: Optional[List[float]] = None
+    force: float = 1.0
+    dernier_acces: float = field(default_factory=lambda: datetime.datetime.now().timestamp())
+    clan_associe: Optional[str] = None
+    classes_associees: List[int] = field(default_factory=list)
+
+# =====================================================================
+# MOTEUR ORACLE PHASE 3 (adapté pour Streamlit)
+# =====================================================================
+
+# Configuration
+MEMORY_FOLDER = "oracle_nzebi_memory"
+DB_PATH = os.path.join(MEMORY_FOLDER, "oracle_phase3.db")
+SATURATION_THRESHOLD = 0.42
+TEMPERATURE_INITIALE = 0.75
+SEUIL_SILENCE = 0.15
+SEUIL_PROVERBE = 0.30
+SEUIL_PARTIEL = 0.50
+
+os.makedirs(MEMORY_FOLDER, exist_ok=True)
+
+# Dictionnaire Muroni (extrait)
+DICT_MURONI_EXTRACTION = [
+    {"fr": "homme", "nz": "moutou", "classe": 1},
+    {"fr": "femme", "nz": "moukassa", "classe": 1},
+    {"fr": "cœur", "nz": "mutema", "classe": 2},
+    {"fr": "arbre", "nz": "muti", "classe": 2},
+    {"fr": "eau", "nz": "mamba", "classe": 3},
+    {"fr": "chemin", "nz": "ndzela", "classe": 5},
+    {"fr": "rivière", "nz": "ndzeli", "classe": 5},
+    {"fr": "chaleur", "nz": "ndzoungouli", "classe": 7},
+    {"fr": "transpiration", "nz": "ndzounguili", "classe": 7},
+    {"fr": "perroquet", "nz": "koussou", "classe": 9},
+    {"fr": "rougeur", "nz": "kusu", "classe": 9},
+    {"fr": "constipation", "nz": "niodi", "classe": 9},
+    {"fr": "eczéma", "nz": "ngomba", "classe": 9},
+    {"fr": "abcès", "nz": "ivanga", "classe": 6},
+    {"fr": "maladie", "nz": "mabeda", "classe": 3},
+    {"fr": "sorcier", "nz": "mouloghi", "classe": 1},
+    {"fr": "divinité", "nz": "boundzambi", "classe": 7},
+    {"fr": "temps", "nz": "bouchi", "classe": 7},
+    {"fr": "grandeur", "nz": "bunène", "classe": 7},
+    {"fr": "intelligence", "nz": "bouyedi", "classe": 7},
+    {"fr": "cécité", "nz": "boupipidi", "classe": 7},
+    {"fr": "savoir", "nz": "yaba", "classe": 8},
+]
+
+# Synergies
+SYNERGIES_EXAMPLES = [
+    RelationSynergie("mutema", "muti", 2, 2, "Le cœur est l'arbre du corps ; l'arbre est le cœur de la forêt."),
+    RelationSynergie("mamba", "ndzeli", 3, 5, "L'eau et la rivière sont une même essence."),
+    RelationSynergie("moutema", "nzina", 2, 10, "Le sang et le cœur sont liés par la vie."),
+]
+
+# Clans fondateurs (simplifiés pour l'exemple)
+CLANS_FONDATEURS = {
+    "Buku": {"clan": "Mwanda", "devise": "Buku mwana Nzèbi, mwana wa Kana", "ikoko": "panthère", "lebutu": "palmier à huile"},
+    "Mwélé": {"clan": "Makhamba", "devise": "Mwélé inéni, songa Malemba", "ikoko": "varan", "lebutu": "safoutier"},
+    "Mombo": {"clan": "Seyi", "devise": "Mombo Mabakha, aba bakuna", "ikoko": "chat sauvage", "lebutu": "courge"},
+    "Kombolo": {"clan": "Bakhuli", "devise": "Kombolo mu mutanya", "ikoko": "perroquet", "lebutu": "arachide"},
+    "Bunzanga": {"clan": "Basanga", "devise": "Bunzanga mu mikélé", "ikoko": "chat domestique", "lebutu": "maïs"},
+    "Ndombi": {"clan": "Mitsimba", "devise": "Ndombi abèta buye", "ikoko": "crocodile", "lebutu": "miel"},
+    "Nyimbi": {"clan": "Mbundu", "devise": "Nyimbi a Mirumbi", "ikoko": "éléphant", "lebutu": "igname"},
+}
+
+# Proverbes
+PROVERBES = [
+    {"nzebi": "Na koungi tata ndzoungou itèghèvè", "francais": "Avec trois bûches, une marmite ne se renverse pas", "implicature": "Solidarité clanique"},
+    {"nzebi": "Koutou a tsinga mou mandongui", "francais": "L'homme devient habile grâce aux conseils", "implicature": "Sagesse relationnelle"},
+    {"nzebi": "Noulemba moumochi sa tsoka lêboundzou vè", "francais": "Un seul doigt ne peut pas laver la figure", "implicature": "Entraide nécessaire"},
+    {"nzebi": "Bandrèkè batswala bola kèlè", "francais": "Les tisserins ont amené le bruit dans le village", "implicature": "Parole excessive"},
+    {"nzebi": "Tchindi a vida mèdi mou sèbè bangwabata", "francais": "L'écureuil manque de graisse parce qu'il se rit des grands", "implicature": "Respect des anciens"},
+    {"nzebi": "Nga moukéla chi takagha mbwagha vè", "francais": "Celui qui possède une queue ne doit pas traverser le feu", "implicature": "Prudence et conséquences cycliques"},
+    {"nzebi": "Houghi ghou youlou, batchwi ghou ndzeli", "francais": "L'abeille est au ciel, les poissons dans la rivière", "implicature": "Limites de la connaissance"},
+]
+
+# =====================================================================
+# CLASSE OraclePhase3 (adaptée)
+# =====================================================================
+
+class OraclePhase3:
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
         try:
-            if filename.endswith('.txt') or hasattr(file, 'type') and file.type == 'text/plain':
-                text = file.read().decode('utf-8')
-                file_type = "text"
-                metadata["size"] = len(text)
-            
-            elif filename.endswith('.pdf') and PDF_AVAILABLE:
-                pdf_reader = PyPDF2.PdfReader(file)
-                metadata["pages"] = len(pdf_reader.pages)
-                for page in pdf_reader.pages:
-                    content = page.extract_text()
-                    if content:
-                        text += content + "\n"
-                file_type = "pdf"
-                metadata["size"] = len(text)
-            
-            elif filename.endswith('.docx') and DOCX_AVAILABLE:
-                doc = docx.Document(file)
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-                file_type = "word"
-                metadata["size"] = len(text)
-            
-            elif filename.endswith(('.xlsx', '.xls', '.csv')):
-                if filename.endswith('.csv'):
-                    df = pd.read_csv(file)
-                else:
-                    df = pd.read_excel(file)
-                text = df.to_string()
-                file_type = "spreadsheet"
-                metadata["rows"] = len(df)
-                metadata["columns"] = len(df.columns)
-                metadata["size"] = len(text)
-            
-            else:
-                try:
-                    text = file.read().decode('utf-8')
-                    file_type = "text"
-                except:
-                    text = str(file.read())
-                    file_type = "binary"
-        
-        except Exception as e:
-            text = f"Erreur d'extraction: {str(e)}"
-        
-        return text, {"type": file_type, **metadata}
-    
-    @staticmethod
-    def extract_by_chunks(file, chunk_size: int = Config.CHUNK_SIZE) -> List[str]:
-        text, _ = FileExtractor.extract_text(file)
-        chunks = []
-        paragraphs = re.split(r'\n\s*\n', text)
-        current_chunk = ""
-        
-        for para in paragraphs:
-            if len(current_chunk) + len(para) < chunk_size:
-                current_chunk += para + "\n\n"
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = para + "\n\n"
-        
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        return chunks
-
-# ==========================================
-# ÉTAT TRIADIQUE
-# ==========================================
-class TriadicState:
-    def __init__(self, phi_M=None, phi_C=None, phi_D=0.0, analysis=None):
-        self.phi_M = list(phi_M) if phi_M else [0.0] * Config.EMBEDDING_DIM
-        self.phi_C = list(phi_C) if phi_C else [0.0] * Config.EMBEDDING_DIM
-        self.phi_D = float(phi_D)
-        self.timestamp = datetime.datetime.now().timestamp()
-        self.stability = 0.0
-        self.convergence_history = []
-        self.analysis = analysis or {}
-
-# ==========================================
-# FLOT TRIADIQUE AVEC ATTRACTEUR CIRCULAIRE
-# ==========================================
-class TriadicFlow:
-    def __init__(self):
-        self.alpha_M = Config.ALPHA_M
-        self.alpha_C = Config.ALPHA_C
-        self.alpha_D = Config.ALPHA_D
-        self.radius = Config.ATTRACTOR_RADIUS
-    
-    def _norm(self, vec):
-        try:
-            return np.sqrt(sum(v * v for v in vec))
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(model_name)
         except:
-            return 0.0
-    
-    def _normalize(self, vec):
-        norm = self._norm(vec)
-        if norm > 1e-6:
-            factor = self.radius / norm
-            return [v * factor for v in vec]
-        return vec
-    
-    def flow_equations(self, state: TriadicState, dt: float = 0.01) -> TriadicState:
-        try:
-            # Équations différentielles originales
-            dM = [-self.alpha_M * m + self.alpha_C * c + self.alpha_D * state.phi_D 
-                  for m, c in zip(state.phi_M, state.phi_C)]
-            dC = [-self.alpha_C * c + self.alpha_D * state.phi_D + self.alpha_M * m 
-                  for m, c in zip(state.phi_M, state.phi_C)]
-            dD = (-self.alpha_D * state.phi_D + 
-                  self.alpha_M * sum(state.phi_M)/len(state.phi_M) + 
-                  self.alpha_C * sum(state.phi_C)/len(state.phi_C))
-
-            # Mise à jour par Euler
-            new_M = [m + dt * dm for m, dm in zip(state.phi_M, dM)]
-            new_C = [c + dt * dc for c, dc in zip(state.phi_C, dC)]
-            new_D = state.phi_D + dt * dD
-
-            # Force d'attracteur vers le cercle unité
-            r = self._norm(new_M) + self._norm(new_C)
-            if r > 1e-6:
-                correction_factor = 1.0 + self.alpha_D * (1.0 - r) * dt * 10
-                new_M = [m * correction_factor for m in new_M]
-                new_C = [c * correction_factor for c in new_C]
-
-            # Renormalisation finale
-            new_M = self._normalize(new_M)
-            new_C = self._normalize(new_C)
-
-            current_r = self._norm(new_M) + self._norm(new_C)
-            if current_r < 0.95 or current_r > 1.05:
-                final_factor = 1.0 / current_r
-                new_M = [m * final_factor for m in new_M]
-                new_C = [c * final_factor for c in new_C]
-
-            return TriadicState(phi_M=new_M, phi_C=new_C, phi_D=new_D, analysis=state.analysis)
-        except Exception as e:
-            print(f"Erreur dans flow_equations: {e}")
-            return state
-    
-    def converge(self, initial_state: TriadicState, max_iter: int = None) -> TriadicState:
-        if max_iter is None:
-            max_iter = Config.MAX_ITERATIONS
+            st.warning("SentenceTransformers non installé. Utilisation d'un modèle simulé (fonctionnalités limitées).")
+            self.model = None
         
-        state = initial_state
-        history = []
+        self.phi_m = 0.15
+        self.phi_c = 0.0
+        self.phi_d = 0.0
+        self.temperature = TEMPERATURE_INITIALE
+        self.phase = 0.0
+        self.tour = 0
+        self.cycles = []
+        self.cycle_actuel = {"accumulation": [], "desordre": [], "complexite": [], "retour": []}
+        self.memory = []
+        self.embeddings_matrix = None
+        self.memoire_lt = []
+        self.synergies = SYNERGIES_EXAMPLES
+        self._proverbes = PROVERBES
+        self._proverbe_embeddings = None
         
-        for _ in range(max_iter):
-            try:
-                prev_stability = state.stability
-                state = self.flow_equations(state)
-                norm_M = self._norm(state.phi_M)
-                norm_C = self._norm(state.phi_C)
-                state.stability = norm_M + norm_C + abs(state.phi_D)
-                history.append(state.stability)
-                if abs(state.stability - prev_stability) < Config.CONVERGENCE_THRESHOLD:
-                    break
-            except:
-                break
-        
-        state.convergence_history = history
-        return state
-    
-    def attractor_projection(self, state: TriadicState) -> Tuple[float, float]:
-        try:
-            if state.phi_M and state.phi_C:
-                cos_theta = state.phi_M[0] / self.radius if self.radius > 0 else 0.0
-                sin_theta = state.phi_C[0] / self.radius if self.radius > 0 else 0.0
-                norm = np.sqrt(cos_theta**2 + sin_theta**2)
-                if norm > 1e-6:
-                    cos_theta /= norm
-                    sin_theta /= norm
-            else:
-                cos_theta, sin_theta = 0.0, 0.0
-        except:
-            cos_theta, sin_theta = 0.0, 0.0
-        return (cos_theta, sin_theta)
-
-# ==========================================
-# ORACLE TTU-MC³ AVEC SUPABASE
-# ==========================================
-class TTUOracle:
-    def __init__(self):
-        self.model = None
-        if TRANSFORMER_AVAILABLE:
-            try:
-                self.model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-            except:
-                pass
-        
-        self.flow = TriadicFlow()
-        self.analyzer = MultiLevelAnalyzer()
-        self.extractor = FileExtractor()
-        
-        self.supabase: Client = create_client(
-            st.secrets["SUPABASE_URL"],
-            st.secrets["SUPABASE_KEY"]
-        )
-        
-        self.states: List[TriadicState] = []
-        self.cycles: Dict[str, dict] = {}
-        self.global_coherence = 0.0
+        self._init_db()
         self._load_memory()
+        self._build_embedding_matrix()
+    
+    def _init_db(self):
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, name TEXT, timestamp TEXT, source TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS paragraphs (id TEXT PRIMARY KEY, doc_id TEXT, text TEXT, embedding TEXT, timestamp TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS sentences (id TEXT PRIMARY KEY, para_id TEXT, text TEXT, embedding TEXT, timestamp TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY, word TEXT, nominal_class INTEGER, frequency INTEGER, doc_id TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS concepts (concept TEXT, ref_id TEXT, ref_type TEXT, weight REAL, PRIMARY KEY (concept, ref_id))")
+        cursor.execute("CREATE TABLE IF NOT EXISTS cycles (id TEXT PRIMARY KEY, accumulation TEXT, desordre TEXT, complexite TEXT, retour TEXT, timestamp TEXT, resonance REAL)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS memoire_lt (id TEXT PRIMARY KEY, contenu TEXT, embedding TEXT, force REAL, dernier_acces REAL, clan_associe TEXT, classes_associees TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS proverbes_db (id TEXT PRIMARY KEY, nzebi TEXT, francais TEXT, implicature TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS dictionnaire (id TEXT PRIMARY KEY, mot_francais TEXT, mot_nzebi TEXT, classe INTEGER, definition TEXT, synonymes TEXT, antonymes TEXT, analogies TEXT)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS synergies (id TEXT PRIMARY KEY, terme_a TEXT, terme_b TEXT, classe_a INTEGER, classe_b INTEGER, principe TEXT, intensite REAL)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS joutes_mbomo (id TEXT PRIMARY KEY, question TEXT, candidat_a TEXT, candidat_b TEXT, vainqueur TEXT, timestamp REAL)")
+        # Insérer les proverbes
+        for p in PROVERBES:
+            cursor.execute("INSERT OR IGNORE INTO proverbes_db (id, nzebi, francais, implicature) VALUES (?,?,?,?)",
+                          (str(uuid.uuid4()), p["nzebi"], p["francais"], p["implicature"]))
+        for entree in DICT_MURONI_EXTRACTION:
+            cursor.execute("INSERT OR IGNORE INTO dictionnaire (id, mot_francais, mot_nzebi, classe) VALUES (?,?,?,?)",
+                          (str(uuid.uuid4()), entree["fr"], entree["nz"], entree["classe"]))
+        for syn in SYNERGIES_EXAMPLES:
+            cursor.execute("INSERT OR IGNORE INTO synergies (id, terme_a, terme_b, classe_a, classe_b, principe, intensite) VALUES (?,?,?,?,?,?,?)",
+                          (syn.id, syn.terme_a, syn.terme_b, syn.classe_a, syn.classe_b, syn.principe, syn.intensite))
+        conn.commit()
+        conn.close()
     
     def _load_memory(self):
-        try:
-            response = self.supabase.table("knowledge").select("*").execute()
-            for row in response.data:
-                try:
-                    phi_m = self._parse_vector(row.get('phi_m'))
-                    phi_c = self._parse_vector(row.get('phi_c'))
-                    analysis = row.get('metadata', {})
-                    if isinstance(analysis, str):
-                        analysis = json.loads(analysis)
-                    state = TriadicState(phi_M=phi_m, phi_C=phi_c, phi_D=row.get('phi_d', 0.0), analysis=analysis)
-                    
-                    self.cycles[row['id']] = {
-                        "id": row['id'],
-                        "state": state,
-                        "attractor": (row.get('attractor_cos', 0.0), row.get('attractor_sin', 0.0))
-                    }
-                    self.states.append(state)
-                except Exception as e:
-                    print(f"Erreur chargement cycle {row.get('id')}: {e}")
-                    continue
-            self._update_coherence()
-        except Exception as e:
-            st.error(f"Erreur chargement depuis Supabase: {e}")
-    
-    def _parse_vector(self, vec_data):
-        if vec_data is None:
-            return [0.0] * Config.EMBEDDING_DIM
-        if isinstance(vec_data, list):
-            # S'assurer de la bonne dimension
-            if len(vec_data) != Config.EMBEDDING_DIM:
-                vec_data = (vec_data + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
-            return vec_data
-        if isinstance(vec_data, str):
-            try:
-                vec_str = vec_data.strip('[]')
-                vec = [float(x) for x in vec_str.split(',') if x.strip()]
-                if len(vec) != Config.EMBEDDING_DIM:
-                    vec = (vec + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
-                return vec
-            except:
-                return [0.0] * Config.EMBEDDING_DIM
-        return [0.0] * Config.EMBEDDING_DIM
-    
-    def _encode_text_with_analysis(self, text: str, analysis: Dict = None) -> Tuple[List[float], List[float], float]:
-        try:
-            # Génération de l'embedding brut
-            if self.model:
-                embedding_raw = self.model.encode(text[:500])
-            else:
-                hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
-                np.random.seed(hash_val % 2**32)
-                embedding_raw = np.random.randn(256)
-            
-            # Création de deux vecteurs de taille Config.EMBEDDING_DIM (128)
-            phi_M = embedding_raw[:Config.EMBEDDING_DIM].tolist()
-            if len(embedding_raw) >= 2 * Config.EMBEDDING_DIM:
-                phi_C = embedding_raw[Config.EMBEDDING_DIM:2*Config.EMBEDDING_DIM].tolist()
-            else:
-                phi_C = np.roll(phi_M, 10).tolist()
-            
-            # Padding si nécessaire
-            phi_M = (phi_M + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
-            phi_C = (phi_C + [0.0] * Config.EMBEDDING_DIM)[:Config.EMBEDDING_DIM]
-            
-            phi_D = float(np.mean(embedding_raw))
-            
-            # Normalisation sur la sphère unité
-            norm_M = np.sqrt(sum(v*v for v in phi_M))
-            norm_C = np.sqrt(sum(v*v for v in phi_C))
-            if norm_M > 0:
-                phi_M = [v / norm_M for v in phi_M]
-            if norm_C > 0:
-                phi_C = [v / norm_C for v in phi_C]
-            
-            # Intégration de l'analyse multi-niveaux
-            if analysis:
-                features = np.array([
-                    analysis.get("words", {}).get("lexical_diversity", 0),
-                    analysis.get("sentences", {}).get("avg_sentence_length", 0) / 50,
-                    analysis.get("letters", {}).get("vowel_consonant_ratio", 0),
-                    min(1.0, analysis.get("structure", {}).get("total_paragraphs", 0) / 100)
-                ])
-                for i, f in enumerate(features):
-                    if i < len(phi_M):
-                        phi_M[i] = phi_M[i] * (1 + f * 0.1)
-                    if i < len(phi_C):
-                        phi_C[i] = phi_C[i] * (1 + f * 0.1)
-            
-            return phi_M, phi_C, phi_D
-        except Exception as e:
-            print(f"Erreur encodage: {e}")
-            return [0.0]*Config.EMBEDDING_DIM, [0.0]*Config.EMBEDDING_DIM, 0.5 
-    
-    def learn(self, text: str, source: str = "text", analysis: Dict = None) -> Optional[str]:
-        try:
-            if analysis is None:
-                analysis = self.analyzer.full_analysis(text[:5000])
-            
-            phi_M, phi_C, phi_D = self._encode_text_with_analysis(text, analysis)
-            state = TriadicState(phi_M=phi_M, phi_C=phi_C, phi_D=phi_D, analysis=analysis)
-            converged = self.flow.converge(state)
-            attractor = self.flow.attractor_projection(converged)
-            
-            coherence = 1.0 - abs(attractor[0]) - abs(attractor[1])
-            coherence = max(0.0, min(1.0, coherence))
-            
-            data = {
-                "content": text[:5000],
-                "source": source,
-                "phi_m": converged.phi_M,
-                "phi_c": converged.phi_C,
-                "phi_d": converged.phi_D,
-                "attractor_cos": attractor[0],
-                "attractor_sin": attractor[1],
-                "coherence": coherence,
-                "metadata": analysis,
-                "word_count": analysis.get("words", {}).get("total_words", 0),
-                "sentence_count": analysis.get("sentences", {}).get("total_sentences", 0),
-                "letter_count": analysis.get("letters", {}).get("total_letters", 0),
-                "main_themes": json.dumps(analysis.get("context", {}).get("main_themes", []))
-            }
-            
-            response = self.supabase.table("knowledge").insert(data).execute()
-            if response.data:
-                cycle_id = response.data[0]['id']
-                self.cycles[cycle_id] = {"id": cycle_id, "state": converged, "attractor": attractor}
-                self.states.append(converged)
-                self._update_coherence()
-                return cycle_id
-            return None
-        except Exception as e:
-            st.error(f"Erreur d'apprentissage: {e}")
-            return None
-    
-    def learn_document(self, uploaded_file, progress_callback=None) -> Dict[str, Any]:
-        try:
-            text, metadata = self.extractor.extract_text(uploaded_file)
-            
-            if not text.strip():
-                return {"success": False, "error": "Texte vide", "cycles": []}
-            
-            # Découpage en paragraphes
-            paragraphs = re.split(r'\n\s*\n', text)
-            paragraphs = [p.strip() for p in paragraphs if p.strip()]
-            
-            # Regroupement en chunks de taille raisonnable
-            chunks = []
-            current_chunk = ""
-            for para in paragraphs:
-                if len(current_chunk) + len(para) < Config.CHUNK_SIZE:
-                    current_chunk += para + "\n\n"
-                else:
-                    if current_chunk:
-                        chunks.append(current_chunk.strip())
-                    current_chunk = para + "\n\n"
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            
-            # Apprentissage de chaque chunk
-            chunk_cycles = []
-            total_chunks = len(chunks)
-            for i, chunk in enumerate(chunks):
-                if progress_callback:
-                    progress_callback(i, total_chunks)
-                if chunk.strip():
-                    chunk_analysis = self.analyzer.full_analysis(chunk[:5000])
-                    chunk_id = self.learn(chunk[:5000],
-                                          source=f"{uploaded_file.name} (chunk {i+1})",
-                                          analysis=chunk_analysis)
-                    if chunk_id:
-                        chunk_cycles.append(chunk_id)
-            
-            return {
-                "success": True,
-                "cycles": chunk_cycles,
-                "metadata": metadata,
-                "analysis": self.analyzer.full_analysis(text[:5000]),
-                "total_chunks": len(chunks)
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e), "cycles": []}
-    
-    def _update_coherence(self):
-        if not self.cycles:
-            self.global_coherence = 0.0
-            return
-        coherence_sum = 0.0
-        for cycle in self.cycles.values():
-            coherence = 1.0 - abs(cycle["attractor"][0]) - abs(cycle["attractor"][1])
-            coherence_sum += max(0.0, min(1.0, coherence))
-        self.global_coherence = coherence_sum / len(self.cycles)
-    
-    def search(self, query: str, top_k: int = 3) -> List[dict]:
-        try:
-            phi_M_q, phi_C_q, _ = self._encode_text_with_analysis(query)
-            response = self.supabase.rpc(
-                'match_knowledge_triadic',
-                {
-                    'query_embedding_m': phi_M_q,
-                    'query_embedding_c': phi_C_q,
-                    'match_threshold': 0.5,
-                    'match_count': top_k
-                }
-            ).execute()
-            
-            results = []
-            for row in response.data:
-                results.append({
-                    "id": row['id'],
-                    "similarity": row['combined_similarity'],
-                    "attractor": None
-                })
-            return results
-        except Exception as e:
-            print(f"Erreur recherche: {e}")
-            return []
-    
-    def reason(self, question: str) -> Dict[str, Any]:
-        results = self.search(question)
-        if not results:
-            return {"response": "Aucune connaissance trouvée.", "coherence": 0.0, "sources": [], "analysis": {}}
-        
-        knowledge = []
-        for r in results[:2]:
-            try:
-                row = self.supabase.table("knowledge").select("content, coherence, metadata, source").eq("id", r["id"]).execute()
-                if row.data:
-                    item = row.data[0]
-                    knowledge.append({
-                        "text": item["content"][:500],
-                        "coherence": item["coherence"],
-                        "similarity": r["similarity"],
-                        "analysis": item.get("metadata", {}),
-                        "source": item.get("source", "inconnu")
-                    })
-            except Exception as e:
-                print(f"Erreur récupération source: {e}")
-        
-        coherence = knowledge[0]["coherence"] if knowledge else 0.0
-        return {
-            "response": self._generate_response(question, knowledge, coherence),
-            "coherence": coherence,
-            "sources": [{"text": k["text"][:200] + "...", "source": k.get("source", "inconnu")} for k in knowledge],
-            "analysis": knowledge[0]["analysis"] if knowledge else {}
-        }
-    
-    def _generate_response(self, question: str, knowledge: List[dict], coherence: float) -> str:
-        if not knowledge:
-            return "Aucune connaissance pertinente."
-        
-        parts = []
-        for k in knowledge[:2]:
-            parts.append(f"**Source:** {k.get('source', 'inconnu')}\n{k['text']}")
-        
-        coherence_ind = "✓" if coherence > 0.6 else "⚠" if coherence > 0.3 else "✗"
-        return "\n\n---\n\n".join(parts) + f"\n\n---\n🌀 **Cohérence:** {coherence_ind} {coherence:.2f}"
-    
-    def get_stats(self) -> Dict:
-        try:
-            response = self.supabase.table("knowledge").select("word_count, sentence_count, letter_count", count="exact").execute()
-            total_cycles = len(response.data)
-            total_words = sum(row.get('word_count', 0) for row in response.data)
-            total_sentences = sum(row.get('sentence_count', 0) for row in response.data)
-            total_letters = sum(row.get('letter_count', 0) for row in response.data)
-        except Exception as e:
-            total_cycles = len(self.cycles)
-            total_words = total_sentences = total_letters = 0
-        
-        stable = sum(1 for s in self.states if s.stability < 0.1)
-        return {
-            "cycles": total_cycles,
-            "coherence": self.global_coherence,
-            "stable": stable,
-            "total_words": total_words,
-            "total_sentences": total_sentences,
-            "total_letters": total_letters
-        }
-    
-    def get_attractors(self) -> pd.DataFrame:
-        data = []
-        for cycle_id, cycle in list(self.cycles.items())[:50]:
-            data.append({
-                "id": cycle_id[:6],
-                "cos": cycle["attractor"][0],
-                "sin": cycle["attractor"][1],
-                "coherence": 1.0 - abs(cycle["attractor"][0]) - abs(cycle["attractor"][1])
-            })
-        return pd.DataFrame(data)
-    
-    def get_triad_state(self) -> Dict:
-        if not self.states:
-            return {"M": 0.0, "C": 0.0, "D": 0.0}
-        return {
-            "M": float(np.mean([s.phi_M[0] if s.phi_M else 0 for s in self.states])),
-            "C": float(np.mean([s.phi_C[0] if s.phi_C else 0 for s in self.states])),
-            "D": float(np.mean([s.phi_D for s in self.states]))
-        }
-    
-    def analyze_text(self, text: str) -> Dict:
-        return self.analyzer.full_analysis(text[:5000])
-
-# ==========================================
-# APPLICATION STREAMLIT
-# ==========================================
-def main():
-    st.set_page_config(page_title="Oracle TTU-MC³", page_icon="🌀", layout="wide")
-    
-    @st.cache_resource
-    def get_oracle():
-        return TTUOracle()
-    
-    oracle = get_oracle()
-    
-    # CSS
-    st.markdown("""
-    <style>
-    .title { text-align: center; background: linear-gradient(135deg, #667eea, #764ba2); padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px; }
-    .high { background: #d4edda; color: #155724; padding: 10px; border-radius: 5px; }
-    .medium { background: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; }
-    .low { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; }
-    .stat-card { background: #f0f2f6; padding: 10px; border-radius: 5px; margin: 5px; }
-    .metric { font-size: 24px; font-weight: bold; }
-    </style>
-    <div class="title">
-        <h1>🌀 Oracle TTU-MC³</h1>
-        <p>Φ = (Φ_M, Φ_C, Φ_D) → Cercle Unité | Analyse multi-niveaux: lettre → syllabe → mot → phrase → texte → contexte</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("État Triadique")
-        stats = oracle.get_stats()
-        triad = oracle.get_triad_state()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Cycles", stats["cycles"])
-            st.metric("Cohérence", f"{stats['coherence']:.2f}")
-        with col2:
-            st.metric("Stables", stats["stable"])
-            st.metric("Φ_D", f"{triad['D']:.2f}")
-        
-        st.divider()
-        st.subheader("📊 Statistiques textuelles")
-        
-        st.markdown(f"""
-        <div class="stat-card">
-        📝 Mots: {stats['total_words']:,}<br>
-        📖 Phrases: {stats['total_sentences']:,}<br>
-        🔤 Lettres: {stats['total_letters']:,}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.write("**État triadique:**")
-        st.write(f"Φ_M: {triad['M']:.2f}")
-        st.progress(min(1.0, max(0.0, triad['M'])))
-        st.write(f"Φ_C: {triad['C']:.2f}")
-        st.progress(min(1.0, max(0.0, triad['C'])))
-        st.write(f"Φ_D: {triad['D']:.2f}")
-        st.progress(min(1.0, max(0.0, triad['D'])))
-        
-        st.divider()
-        st.json(stats)
-    
-    # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["🌀 Apprentissage", "🔍 Interrogation", "🎯 Carte", "📊 Analyse"])
-    
-    with tab1:
-        st.header("Apprentissage Triadique Multi-niveaux")
-        st.markdown("""
-        L'apprentissage analyse chaque texte à tous les niveaux:
-        - **Lettres**: fréquences, voyelles/consonnes
-        - **Syllabes**: structure phonétique
-        - **Mots**: vocabulaire, diversité lexicale
-        - **Phrases**: longueur, structure
-        - **Texte**: paragraphes, structure globale
-        - **Contexte**: thèmes, co-occurrences
-        """)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📝 Texte")
-            texte = st.text_area("Texte à apprendre", height=300, key="learn_text")
-            
-            if st.button("🌀 Apprendre le texte", type="primary", key="learn_btn"):
-                if texte.strip():
-                    with st.spinner("Analyse multi-niveaux et convergence..."):
-                        cycle_id = oracle.learn(texte)
-                        if cycle_id:
-                            st.success(f"✅ Appris: {cycle_id[:8]}")
-                            st.info(f"📊 Cohérence globale: {oracle.global_coherence:.3f}")
-                            
-                            analysis = oracle.analyze_text(texte)
-                            with st.expander("📊 Analyse multi-niveaux"):
-                                col_a, col_b, col_c = st.columns(3)
-                                with col_a:
-                                    st.write("**Lettres**")
-                                    st.write(f"Total: {analysis['letters']['total_letters']}")
-                                    st.write(f"Voyelles: {analysis['letters']['vowels']}")
-                                    st.write(f"Consonnes: {analysis['letters']['consonants']}")
-                                with col_b:
-                                    st.write("**Mots**")
-                                    st.write(f"Total: {analysis['words']['total_words']}")
-                                    st.write(f"Uniques: {analysis['words']['unique_words']}")
-                                    st.write(f"Diversité: {analysis['words']['lexical_diversity']:.2f}")
-                                with col_c:
-                                    st.write("**Phrases**")
-                                    st.write(f"Total: {analysis['sentences']['total_sentences']}")
-                                    st.write(f"Moyenne: {analysis['sentences']['avg_sentence_length']:.1f} mots")
-                            st.rerun()
-                        else:
-                            st.error("Erreur d'apprentissage")
-                else:
-                    st.warning("Entrez un texte")
-        
-        with col2:
-            st.subheader("📁 Document")
-            uploaded_file = st.file_uploader(
-                "Choisissez un fichier",
-                type=['txt', 'pdf', 'docx', 'csv', 'xlsx', 'xls'],
-                help="Formats supportés: TXT, PDF, Word, Excel, CSV"
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, text, embedding, timestamp FROM paragraphs")
+        for row in cursor.fetchall():
+            emb = np.array(json.loads(row[2])) if row[2] else None
+            self.memory.append({"id": row[0], "text": row[1], "embedding": emb, "timestamp": row[3]})
+        # Charger les cycles
+        cursor.execute("SELECT id, accumulation, desordre, complexite, retour, timestamp, resonance FROM cycles")
+        for row in cursor.fetchall():
+            cycle = CycleSpiral(
+                accumulation=json.loads(row[1]) if row[1] else [],
+                desordre=json.loads(row[2]) if row[2] else [],
+                complexite=json.loads(row[3]) if row[3] else [],
+                retour=json.loads(row[4]) if row[4] else [],
+                timestamp=float(row[5]) if row[5] else datetime.datetime.now().timestamp(),
+                resonance=float(row[6]) if row[6] else 0.0,
+                id=row[0]
             )
-            
-            if uploaded_file:
-                st.info(f"Fichier: {uploaded_file.name}")
-                
-                if st.button("📚 Apprendre le document", type="primary", key="learn_doc_btn"):
-                    # Barre de progression personnalisée
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    def update_progress(i, total):
-                        progress_bar.progress((i + 1) / total)
-                        status_text.text(f"Traitement chunk {i+1}/{total}")
-                    
-                    with st.spinner("Extraction et découpage..."):
-                        result = oracle.learn_document(uploaded_file, progress_callback=update_progress)
-                    
-                    progress_bar.empty()
-                    status_text.empty()
-                    
-                    if result["success"]:
-                        st.success(f"✅ Document appris: {len(result['cycles'])} cycles créés")
-                        st.info(f"📊 Métadonnées: {result['metadata']}")
-                        
-                        analysis = result.get("analysis", {})
-                        with st.expander("📊 Analyse multi-niveaux du document"):
-                            col_a, col_b, col_c = st.columns(3)
-                            with col_a:
-                                st.write("**Lettres**")
-                                st.write(f"Total: {analysis.get('letters', {}).get('total_letters', 0)}")
-                                st.write(f"Voyelles: {analysis.get('letters', {}).get('vowels', 0)}")
-                            with col_b:
-                                st.write("**Mots**")
-                                st.write(f"Total: {analysis.get('words', {}).get('total_words', 0)}")
-                                themes = analysis.get('context', {}).get('main_themes', [])
-                                if themes:
-                                    st.write("**Thèmes:**")
-                                    for t in themes[:3]:
-                                        st.write(f"- {t[0]}")
-                            with col_c:
-                                st.write("**Structure**")
-                                st.write(f"Paragraphes: {analysis.get('structure', {}).get('total_paragraphs', 0)}")
-                                st.write(f"Phrases: {analysis.get('sentences', {}).get('total_sentences', 0)}")
-                    else:
-                        st.error(f"Erreur: {result.get('error', 'Inconnue')}")
+            self.cycles.append(cycle)
+            if cycle.est_complet():
+                self.tour += 1
+        # Charger mémoire LT
+        cursor.execute("SELECT id, contenu, embedding, force, dernier_acces, clan_associe, classes_associees FROM memoire_lt")
+        for row in cursor.fetchall():
+            emb = np.array(json.loads(row[2])) if row[2] else None
+            self.memoire_lt.append({
+                "id": row[0],
+                "contenu": row[1],
+                "embedding": emb,
+                "force": row[3],
+                "dernier_acces": row[4],
+                "clan": row[5],
+                "classes": json.loads(row[6]) if row[6] else []
+            })
+        conn.close()
     
-    with tab2:
-        st.header("Interrogation Triadique")
-        
-        question = st.text_input("💭 Votre question", key="question_input")
-        
-        if st.button("🌀 Interroger", type="primary", key="reason_btn"):
-            if question.strip():
-                with st.spinner("Convergence vers l'attracteur..."):
-                    result = oracle.reason(question)
-                    
-                    coh = result["coherence"]
-                    if coh > 0.6:
-                        st.markdown(f'<div class="high">📊 Cohérence: {coh:.2f} (Élevée)</div>', unsafe_allow_html=True)
-                    elif coh > 0.3:
-                        st.markdown(f'<div class="medium">📊 Cohérence: {coh:.2f} (Moyenne)</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="low">📊 Cohérence: {coh:.2f} (Faible)</div>', unsafe_allow_html=True)
-                    
-                    st.markdown("### 🌀 Réponse")
-                    st.write(result["response"])
-                    
-                    if result["sources"]:
-                        with st.expander("📚 Sources"):
-                            for src in result["sources"]:
-                                st.write(f"**{src['source']}**")
-                                st.write(src["text"])
-            else:
-                st.warning("Entrez une question")
+    def _build_embedding_matrix(self):
+        if self.model is None:
+            self.embeddings_matrix = None
+            return
+        vectors = [m["embedding"] for m in self.memory if m["embedding"] is not None]
+        if not vectors:
+            self.embeddings_matrix = None
+            return
+        mat = np.vstack(vectors)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        self.embeddings_matrix = mat / np.where(norms == 0, 1.0, norms)
     
-    with tab3:
-        st.header("Carte des Attracteurs")
-        st.markdown("Visualisation tabulaire des connaissances stabilisées.")
-        
-        df = oracle.get_attractors()
-        
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-            
-            st.subheader("Statistiques des attracteurs")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Moyenne cos", f"{df['cos'].mean():.3f}")
-                st.metric("Min cos", f"{df['cos'].min():.3f}")
-                st.metric("Max cos", f"{df['cos'].max():.3f}")
-            with col2:
-                st.metric("Moyenne sin", f"{df['sin'].mean():.3f}")
-                st.metric("Min sin", f"{df['sin'].min():.3f}")
-                st.metric("Max sin", f"{df['sin'].max():.3f}")
-            with col3:
-                st.metric("Moyenne cohérence", f"{df['coherence'].mean():.3f}")
-                st.metric("Min cohérence", f"{df['coherence'].min():.3f}")
-                st.metric("Max cohérence", f"{df['coherence'].max():.3f}")
+    def detecter_classe(self, mot: str) -> int:
+        mot = mot.lower()
+        if mot.startswith("mu") or mot.startswith("mou"):
+            if any(mot.startswith(p) for p in ['moutou', 'mouloghi', 'moukassa']):
+                return 1
+            return 2
+        if mot.startswith("ba"):
+            return 1
+        if mot.startswith("mi"):
+            return 2
+        if mot.startswith("bi"):
+            return 6
+        if mot.startswith("le"):
+            return 4
+        if mot.startswith("ma"):
+            if mot in ['mamba', 'massoba']:
+                return 3
+            return 5
+        if mot.startswith("i"):
+            return 6
+        if mot.startswith("bu") or mot.startswith("bou"):
+            return 7
+        return 9
+    
+    def trouver_synergies(self, mot: str) -> List[Dict]:
+        result = []
+        for syn in self.synergies:
+            if syn.terme_a == mot or syn.terme_b == mot:
+                result.append({"a": syn.terme_a, "b": syn.terme_b, "principe": syn.principe, "intensite": syn.intensite})
+        return result
+    
+    def charger_proverbes(self) -> List[Dict]:
+        return self._proverbes
+    
+    def apprendre(self, text: str, source: str = "direct") -> int:
+        if not text.strip() or self.model is None:
+            return 0
+        blocks = [b.strip() for b in text.split("\n\n") if len(b.strip()) > 30]
+        if not blocks:
+            blocks = [text.strip()] if len(text.strip()) > 30 else []
+        if not blocks:
+            return 0
+        doc_id = str(uuid.uuid4())
+        ts = datetime.datetime.now().isoformat()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO documents VALUES (?,?,?,?)", (doc_id, source, ts, "text_stream"))
+        count = 0
+        for block in blocks:
+            emb = self.model.encode(block)
+            para_id = str(uuid.uuid4())
+            self.memory.append({"id": para_id, "text": block, "embedding": emb, "timestamp": ts})
+            cursor.execute("INSERT INTO paragraphs VALUES (?,?,?,?,?)", 
+                          (para_id, doc_id, block, json.dumps(emb.tolist()), ts))
+            clean_words = re.findall(r"\w+", block.lower())
+            stop_words = {"le", "la", "les", "de", "des", "en", "dans", "est", "pour", "par", "qui", "que", "et", "à", "au", "aux"}
+            for word in clean_words:
+                if word not in stop_words and len(word) > 3:
+                    cls = self.detecter_classe(word)
+                    cursor.execute("INSERT OR IGNORE INTO words (id, word, nominal_class, frequency, doc_id) VALUES (?,?,?,?,?)",
+                                  (str(uuid.uuid4()), word, cls, 1, doc_id))
+                    cursor.execute("INSERT OR IGNORE INTO concepts VALUES (?,?,?,?)", 
+                                  (word, para_id, "paragraph", 1.0))
+            count += 1
+        conn.commit()
+        conn.close()
+        self._build_embedding_matrix()
+        return count
+    
+    def calculer_resonance_spiralee(self, query_embed: np.ndarray) -> Tuple[List[Tuple[Dict, float]], float]:
+        if self.embeddings_matrix is None or len(self.memory) == 0 or self.model is None:
+            return [], 0.0
+        scores = np.dot(self.embeddings_matrix, query_embed)
+        self.phi_c = float(np.max(scores)) if len(scores) > 0 else 0.0
+        self.phi_d = float(np.var(scores) * 4.5) if len(scores) > 1 else 0.35
+        phase_factor = 1.0 + 0.4 * np.sin(self.phase * 2 * np.pi)
+        resonance = self.phi_c / (self.phi_d + 0.01)
+        resonance_ajustee = resonance * phase_factor
+        seuil = SATURATION_THRESHOLD * self.temperature * (0.7 + 0.3 * (1 - self.phase))
+        condensated = []
+        for idx, score in enumerate(scores):
+            if score > seuil:
+                condensated.append((self.memory[idx], float(score)))
+        condensated.sort(key=lambda x: x[1], reverse=True)
+        return condensated[:5], resonance_ajustee
+    
+    def evoluer_spirale(self, resonance: float, question: str = ""):
+        pas = 0.015 + 0.035 * min(1.0, resonance / 1.5)
+        ancienne_phase = self.phase
+        self.phase = (self.phase + pas) % 1.0
+        if self.phase < 0.1 and ancienne_phase >= 0.1:
+            self.cycle_actuel["accumulation"].append(f"Résonance: {resonance:.3f} | {question[:50]}")
+        elif 0.25 <= self.phase < 0.35 and ancienne_phase < 0.25:
+            self.cycle_actuel["desordre"].append(f"Purification: {self.phi_d:.3f}")
+        elif 0.50 <= self.phase < 0.60 and ancienne_phase < 0.50:
+            self.cycle_actuel["complexite"].append(f"Synthèse: {self.phi_c:.3f}")
+        elif 0.75 <= self.phase < 0.85 and ancienne_phase < 0.75:
+            self.cycle_actuel["retour"].append(f"Retour: {self.phi_m:.3f}")
+            if all(len(self.cycle_actuel[k]) > 0 for k in ["accumulation", "desordre", "complexite", "retour"]):
+                cycle = CycleSpiral(
+                    accumulation=self.cycle_actuel["accumulation"],
+                    desordre=self.cycle_actuel["desordre"],
+                    complexite=self.cycle_actuel["complexite"],
+                    retour=self.cycle_actuel["retour"],
+                    resonance=resonance
+                )
+                self.cycles.append(cycle)
+                self.tour += 1
+                self.cycle_actuel = {"accumulation": [], "desordre": [], "complexite": [], "retour": []}
+                # Sauvegarde en base
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO cycles (id, accumulation, desordre, complexite, retour, timestamp, resonance) VALUES (?,?,?,?,?,?,?)",
+                              (cycle.id, json.dumps(cycle.accumulation), json.dumps(cycle.desordre), 
+                               json.dumps(cycle.complexite), json.dumps(cycle.retour), str(cycle.timestamp), resonance))
+                conn.commit()
+                conn.close()
+    
+    def ajouter_memoire_lt(self, contenu: str, clan: Optional[str] = None, classes: Optional[List[int]] = None):
+        if self.model is None:
+            return
+        emb = self.model.encode(contenu).tolist()
+        mem = MemoireLongTerme(contenu=contenu, embedding=emb, force=1.0, clan_associe=clan, classes_associees=classes or [])
+        self.memoire_lt.append({
+            "id": mem.id,
+            "contenu": mem.contenu,
+            "embedding": np.array(mem.embedding),
+            "force": mem.force,
+            "dernier_acces": mem.dernier_acces,
+            "clan": mem.clan_associe,
+            "classes": mem.classes_associees
+        })
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO memoire_lt (id, contenu, embedding, force, dernier_acces, clan_associe, classes_associees) VALUES (?,?,?,?,?,?,?)",
+                      (mem.id, mem.contenu, json.dumps(mem.embedding), mem.force, mem.dernier_acces, mem.clan_associe, json.dumps(mem.classes_associees)))
+        conn.commit()
+        conn.close()
+    
+    def rafraichir_memoire_lt(self):
+        a_supprimer = []
+        for i, mem in enumerate(self.memoire_lt):
+            mem["force"] *= 0.99
+            if mem["force"] < 0.01:
+                a_supprimer.append(i)
+        for idx in reversed(a_supprimer):
+            del self.memoire_lt[idx]
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM memoire_lt WHERE id = ?", (mem["id"],))
+            conn.commit()
+            conn.close()
+    
+    def joute_mbomo(self, question: str, candidat_a: str, candidat_b: str) -> JouteMbomo:
+        if self.model is None:
+            # Fallback
+            return JouteMbomo(question=question, 
+                            candidat_a=CandidateReponse(texte=candidat_a, source_id="", score=0.5),
+                            candidat_b=CandidateReponse(texte=candidat_b, source_id="", score=0.5),
+                            vainqueur="a")
+        q_emb = self.model.encode(question)
+        q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-8)
+        emb_a = self.model.encode(candidat_a)
+        emb_a_norm = emb_a / (np.linalg.norm(emb_a) + 1e-8)
+        emb_b = self.model.encode(candidat_b)
+        emb_b_norm = emb_b / (np.linalg.norm(emb_b) + 1e-8)
+        score_a = float(np.dot(emb_a_norm, q_norm))
+        score_b = float(np.dot(emb_b_norm, q_norm))
+        vainqueur = "a" if score_a > score_b else "b"
+        ca = CandidateReponse(texte=candidat_a, source_id="", score=score_a)
+        cb = CandidateReponse(texte=candidat_b, source_id="", score=score_b)
+        joute = JouteMbomo(question=question, candidat_a=ca, candidat_b=cb, vainqueur=vainqueur)
+        # Sauvegarde
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO joutes_mbomo (id, question, candidat_a, candidat_b, vainqueur, timestamp) VALUES (?,?,?,?,?,?)",
+                      (joute.id, joute.question, candidat_a, candidat_b, vainqueur, joute.timestamp))
+        conn.commit()
+        conn.close()
+        return joute
+    
+    def raisonner(self, question: str) -> str:
+        if not question.strip():
+            return "🌀 La question est vide."
+        if self.model is None:
+            return "⚠️ Modèle non disponible. Veuillez installer sentence-transformers."
+        q_emb = self.model.encode(question)
+        q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-8)
+        results, resonance = self.calculer_resonance_spiralee(q_norm)
+        for doc, _ in results[:1]:
+            self.ajouter_memoire_lt(doc["text"][:200], clan=None)
+        self.rafraichir_memoire_lt()
+        self.evoluer_spirale(resonance, question)
+        if resonance < SEUIL_SILENCE:
+            return self._construire_reponse_silence(question, resonance)
+        elif resonance < SEUIL_PROVERBE:
+            return self._construire_reponse_proverbe(question, resonance)
+        elif resonance < SEUIL_PARTIEL:
+            return self._construire_reponse_partielle(question, results, resonance)
         else:
-            st.info("Aucune connaissance apprise. Commencez par apprendre des textes ou documents.")
+            return self._construire_reponse_complete(question, results, resonance)
     
-    with tab4:
-        st.header("Analyse Multi-niveaux")
-        st.markdown("Analysez n'importe quel texte à tous les niveaux")
-        
-        text_to_analyze = st.text_area("Texte à analyser", height=200, key="analyze_text")
-        
-        if st.button("🔍 Analyser", key="analyze_btn"):
-            if text_to_analyze.strip():
-                with st.spinner("Analyse multi-niveaux en cours..."):
-                    analysis = oracle.analyze_text(text_to_analyze)
-                    
-                    tabs = st.tabs(["📝 Mots", "📖 Phrases", "🔤 Lettres", "🎵 Syllabes", "📚 Structure", "🌐 Contexte"])
-                    
-                    with tabs[0]:
-                        st.subheader("Analyse lexicale")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Mots totaux", analysis['words']['total_words'])
-                        with col2:
-                            st.metric("Mots uniques", analysis['words']['unique_words'])
-                        with col3:
-                            st.metric("Diversité lexicale", f"{analysis['words']['lexical_diversity']:.3f}")
-                        st.write("**Mots les plus fréquents:**")
-                        for word, count in list(analysis['words']['most_common_words'].items())[:10]:
-                            st.write(f"- {word}: {count}")
-                    
-                    with tabs[1]:
-                        st.subheader("Analyse des phrases")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Phrases totales", analysis['sentences']['total_sentences'])
-                        with col2:
-                            st.metric("Longueur moyenne", f"{analysis['sentences']['avg_sentence_length']:.1f} mots")
-                        with col3:
-                            st.metric("Longueur max", f"{analysis['sentences']['max_sentence_length']} mots")
-                        st.write("**Échantillon de phrases:**")
-                        for s in analysis['sentences']['sentences'][:5]:
-                            st.write(f"- {s[:100]}...")
-                    
-                    with tabs[2]:
-                        st.subheader("Analyse des lettres")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Lettres totales", analysis['letters']['total_letters'])
-                        with col2:
-                            st.metric("Lettres uniques", analysis['letters']['unique_letters'])
-                        with col3:
-                            st.metric("Ratio V/C", f"{analysis['letters']['vowel_consonant_ratio']:.2f}")
-                        st.write("**Fréquence des lettres:**")
-                        for letter, count in analysis['letters']['letter_frequency'].items():
-                            st.write(f"- {letter}: {count}")
-                    
-                    with tabs[3]:
-                        st.subheader("Analyse des syllabes")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Syllabes totales", analysis['syllables']['total_syllables'])
-                        with col2:
-                            st.metric("Syllabes uniques", analysis['syllables']['unique_syllables'])
-                        st.write(f"**Moyenne syllabes/mot:** {analysis['syllables']['avg_syllables_per_word']:.2f}")
-                    
-                    with tabs[4]:
-                        st.subheader("Structure du texte")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Paragraphes", analysis['structure']['total_paragraphs'])
-                        with col2:
-                            st.metric("Lignes", analysis['structure']['total_lines'])
-                        st.write(f"**Caractères totaux:** {analysis['structure']['total_characters']:,}")
-                    
-                    with tabs[5]:
-                        st.subheader("Contexte et thèmes")
-                        st.write("**Thèmes principaux:**")
-                        for theme, count in analysis['context']['main_themes'][:10]:
-                            st.write(f"- {theme}: {count}")
-            else:
-                st.warning("Entrez un texte à analyser")
+    def _construire_reponse_silence(self, question: str, resonance: float) -> str:
+        output = f"⚠️ SILENCE SIGNIFIANT (Mbomo)\n{'━'*50}\n"
+        output += "La question retourne à son origine comme un miroir.\n"
+        output += "Rien ne s'est cristallisé. Le savoir s'est purifié dans le silence.\n"
+        output += f"\nRésonance: {resonance:.3f} | Phase: {self.phase:.2f} | Tour: {self.tour}"
+        return output
     
-    st.divider()
-    st.caption("🌀 Oracle TTU-MC³ - Théorie Triadique Unifiée | Analyse multi-niveaux: lettre → syllabe → mot → phrase → texte → contexte")
+    def _construire_reponse_proverbe(self, question: str, resonance: float) -> str:
+        proverbes = self.charger_proverbes()
+        if proverbes and self.model is not None:
+            q_emb = self.model.encode(question)
+            best_prov = None
+            best_score = -1
+            for p in proverbes:
+                emb = self.model.encode(p["francais"])
+                score = np.dot(q_emb, emb) / (np.linalg.norm(q_emb) * np.linalg.norm(emb) + 1e-8)
+                if score > best_score:
+                    best_score = score
+                    best_prov = p
+            if best_prov and best_score > 0.25:
+                output = f"🌀 PAROLE PROVERBIALE (Bisega)\n{'━'*50}\n"
+                output += f"« {best_prov['nzebi']} »\n→ {best_prov['francais']}\nImplicature : {best_prov['implicature']}\n"
+                output += f"\nRésonance: {resonance:.3f} | Phase: {self.phase:.2f} | Tour: {self.tour}"
+                return output
+        return self._construire_reponse_silence(question, resonance * 0.8)
+    
+    def _construire_reponse_partielle(self, question: str, results: List[Tuple[Dict, float]], resonance: float) -> str:
+        output = f"🌀 LIQUÉFACTION (Phase de désordre/complexité)\n{'━'*50}\n"
+        output += f"| Φ_M: {self.phi_m:.4f} | Φ_C: {self.phi_c:.4f} | Φ_D: {self.phi_d:.4f}\n"
+        output += f"| Résonance: {resonance:.3f} | Phase: {self.phase:.2f} | Tour: {self.tour}\n{'━'*50}\n\n"
+        if results:
+            best = results[0]
+            output += f"« {best[0]['text'][:400]} »\n[Confiance: {best[1]:.3f}]\n"
+        else:
+            output += "Aucune substance condensée. Le savoir reste en suspension.\n"
+        return output
+    
+    def _construire_reponse_complete(self, question: str, results: List[Tuple[Dict, float]], resonance: float) -> str:
+        output = f"🌀 CRISTALLISATION (Attracteur Stable)\n{'━'*50}\n"
+        output += f"| Φ_M: {self.phi_m:.4f} | Φ_C: {self.phi_c:.4f} | Φ_D: {self.phi_d:.4f}\n"
+        output += f"| Résonance: {resonance:.3f} | Phase: {self.phase:.2f} | Tour: {self.tour}\n{'━'*50}\n\n"
+        # Synergies
+        mots = re.findall(r'\w+', question.lower())
+        synergies_trouvees = []
+        for mot in mots:
+            syns = self.trouver_synergies(mot)
+            if syns:
+                synergies_trouvees.extend(syns)
+        if synergies_trouvees:
+            output += "⚡ SYNERGIES DÉTECTÉES :\n"
+            for syn in synergies_trouvees[:3]:
+                output += f"  • {syn['a']} ↔ {syn['b']} : {syn['principe']}\n"
+            output += "\n"
+        if results:
+            output += "=== SUBSTANCE CONDENSÉE ===\n"
+            for i, (doc, score) in enumerate(results[:3]):
+                output += f"\n[{i+1}] (Résonance {score:.3f})\n{doc['text'][:500]}\n"
+        else:
+            output += "Aucune substance condensée.\n"
+        return output
+    
+    def statut_spiral(self) -> Dict:
+        return {
+            "phi_m": self.phi_m,
+            "phi_c": self.phi_c,
+            "phi_d": self.phi_d,
+            "temperature": self.temperature,
+            "phase": self.phase,
+            "tour": self.tour,
+            "cycles_complets": len([c for c in self.cycles if c.est_complet()]),
+            "nb_memoires": len(self.memory),
+            "nb_memoire_lt": len(self.memoire_lt),
+            "nb_synergies": len(self.synergies)
+        }
+    
+    def get_donnees_spirale(self) -> Dict:
+        return {
+            "phi_m": self.phi_m,
+            "phi_c": self.phi_c,
+            "phi_d": self.phi_d,
+            "phase": self.phase,
+            "tour": self.tour,
+            "cycles": [c.to_dict() if hasattr(c, 'to_dict') else {
+                "accumulation": c.accumulation,
+                "desordre": c.desordre,
+                "complexite": c.complexite,
+                "retour": c.retour,
+                "resonance": c.resonance
+            } for c in self.cycles],
+            "synergies": [{"a": s.terme_a, "b": s.terme_b, "principe": s.principe} for s in self.synergies],
+            "memoire_lt": [{"contenu": m["contenu"][:100], "force": m["force"]} for m in self.memoire_lt[-20:]]
+        }
 
-if __name__ == "__main__":
-    main()
+# =====================================================================
+# APPLICATION STREAMLIT
+# =====================================================================
+
+st.set_page_config(
+    page_title="🌀 TTU-MC³ – Spirale Vivante",
+    page_icon="🌀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("""
+    <style>
+    .main { background-color: #080b0a; }
+    .stMetric { background-color: rgba(0,255,136,0.04); border: 1px solid rgba(0,255,136,0.12); border-radius: 8px; padding: 10px; }
+    .stMarkdown { font-family: 'Courier New', monospace; }
+    .css-1d391kg { background-color: #080b0a; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Initialisation du moteur dans session_state
+if 'engine' not in st.session_state:
+    st.session_state.engine = OraclePhase3()
+engine = st.session_state.engine
+
+# =====================================================================
+# SIDEBAR
+# =====================================================================
+
+st.sidebar.title("🌀 TTU-MC³")
+st.sidebar.markdown("**Phase 4 · Spirale Vivante**")
+st.sidebar.markdown("---")
+
+st.sidebar.metric("Φ_M · Inertie", f"{engine.phi_m:.4f}")
+st.sidebar.metric("Φ_C · Flux", f"{engine.phi_c:.4f}")
+st.sidebar.metric("Φ_D · Dissipation", f"{engine.phi_d:.4f}")
+st.sidebar.metric("🌡️ Température", f"{engine.temperature:.2f}")
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"**Phase :** {engine.phase:.2f}")
+st.sidebar.markdown(f"**Tour :** {engine.tour}")
+st.sidebar.markdown(f"**Mémoire :** {len(engine.memory)}")
+st.sidebar.markdown(f"**Cycles :** {len(engine.cycles)}")
+
+# =====================================================================
+# MAIN
+# =====================================================================
+
+st.title("🌀 TTU-MC³ – Temps Spiralé")
+st.caption("Cosmogonie Nzèbi · Algorithme Cognitif Bantu B52")
+
+# Métriques principales
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Φ_M · Inertie (Koto)", f"{engine.phi_m:.4f}")
+col2.metric("Φ_C · Flux (Tchengl)", f"{engine.phi_c:.4f}")
+col3.metric("Φ_D · Dissipation", f"{engine.phi_d:.4f}")
+col4.metric("🌡️ Température", f"{engine.temperature:.2f}")
+
+# Phase Bar
+st.markdown("---")
+cols = st.columns(4)
+phases = ["Accumulation", "Désordre", "Complexité", "Retour"]
+for i, (col, label) in enumerate(zip(cols, phases)):
+    seuil_bas = i * 0.25
+    seuil_haut = (i + 1) * 0.25
+    actif = engine.phase >= seuil_bas and engine.phase < seuil_haut
+    passe = engine.phase >= seuil_haut
+    color = "#00ff88" if actif else ("rgba(0,255,136,0.2)" if passe else "rgba(0,255,136,0.05)")
+    col.markdown(f"<div style='background:{color}; padding:8px; border-radius:6px; text-align:center; font-size:0.8rem;'>{label}</div>", unsafe_allow_html=True)
+st.markdown("---")
+
+# Layout 2 colonnes
+col_left, col_right = st.columns([3, 2])
+
+# Colonne gauche : Visualisation
+with col_left:
+    st.subheader("🌀 Spirale des cycles")
+    # Visualisation avec matplotlib
+    try:
+        import matplotlib.pyplot as plt
+        data = engine.get_donnees_spirale()
+        fig, ax = plt.subplots(figsize=(6, 5))
+        ax.set_facecolor('#080b0a')
+        fig.patch.set_facecolor('#080b0a')
+        cx, cy = 0.5, 0.5
+        radius = 0.4
+        # Cercles concentriques
+        for r in np.linspace(0.1, radius, 5):
+            circle = plt.Circle((cx, cy), r, fill=False, color='rgba(0,255,136,0.05)', linewidth=0.5)
+            ax.add_patch(circle)
+        # Lignes radiales
+        for angle in np.linspace(0, 2*np.pi, 12, endpoint=False):
+            ax.plot([cx, cx + radius*np.cos(angle)], [cy, cy + radius*np.sin(angle)], color='rgba(0,255,136,0.03)', linewidth=0.5)
+        # Point central
+        ax.plot(cx, cy, 'o', color='#00ff88', markersize=4, alpha=0.6)
+        # Cycles passés (spirale)
+        cycles = data.get('cycles', [])
+        if cycles:
+            points = []
+            for idx, cycle in enumerate(cycles):
+                t = (idx + 1) / (len(cycles) + 1)
+                r = radius * (0.2 + 0.6 * t)
+                angle = (idx / len(cycles)) * 2 * np.pi - np.pi/2
+                x = cx + r * np.cos(angle)
+                y = cy + r * np.sin(angle)
+                points.append((x, y))
+            # Ajouter point actuel
+            phase_angle = engine.phase * 2 * np.pi - np.pi/2
+            current_r = radius * (0.3 + 0.6 * (engine.phi_m + engine.phi_c) / 2)
+            x_cur = cx + current_r * np.cos(phase_angle)
+            y_cur = cy + current_r * np.sin(phase_angle)
+            points.append((x_cur, y_cur))
+            if len(points) > 1:
+                xs, ys = zip(*points)
+                ax.plot(xs, ys, color='rgba(0,255,136,0.4)', linewidth=2, linestyle='dashed')
+        # Point actuel
+        ax.plot(x_cur, y_cur, 'o', color='#00ff88', markersize=8, alpha=0.9)
+        ax.text(x_cur + 0.02, y_cur - 0.02, 'actuel', color='#00ff88', fontsize=8, alpha=0.6)
+        # Étiquettes des phases
+        phase_labels = ['Accum.', 'Désordre', 'Complex.', 'Retour']
+        for i, label in enumerate(phase_labels):
+            angle = (i / 4) * 2 * np.pi - np.pi/2
+            r = radius + 0.08
+            x = cx + r * np.cos(angle)
+            y = cy + r * np.sin(angle)
+            is_active = (engine.phase >= i * 0.25 and engine.phase < (i + 1) * 0.25)
+            ax.text(x, y, label, color='#00ff88' if is_active else 'rgba(0,255,136,0.2)', fontsize=9, ha='center', va='center')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_aspect('equal')
+        ax.axis('off')
+        st.pyplot(fig)
+    except:
+        st.info("Visualisation nécessite matplotlib. Installez matplotlib pour afficher la spirale.")
+
+# Colonne droite : Formulaires
+with col_right:
+    # Query
+    with st.expander("🔍 Interroger la spirale", expanded=True):
+        with st.form("query_form"):
+            question = st.text_input("Question", placeholder="Soumettre une trajectoire conceptuelle...")
+            submit_query = st.form_submit_button("Mesurer la Résonance")
+            if submit_query and question:
+                with st.spinner("Résonance en cours..."):
+                    answer = engine.raisonner(question)
+                    st.session_state.last_answer = answer
+    # Affichage réponse
+    if 'last_answer' in st.session_state:
+        st.markdown("---")
+        st.markdown("**Réponse spiralée**")
+        st.code(st.session_state.last_answer, language="text")
+
+# Apprentissage
+with st.expander("📚 Injecter un corpus"):
+    with st.form("learn_form"):
+        text = st.text_area("Texte", placeholder="Saisir la substance textuelle brute à indexer...", height=100)
+        submit_learn = st.form_submit_button("Intégrer")
+        if submit_learn and text:
+            blocks = engine.apprendre(text)
+            st.success(f"🌀 Intégration effectuée : {blocks} cellules informationnelles stabilisées.")
+
+# Joute Mbomo
+with st.expander("⚔️ Joute oratoire (Mbomo)"):
+    with st.form("mbomo_form"):
+        q_mb = st.text_input("Question")
+        a_mb = st.text_input("Candidat A")
+        b_mb = st.text_input("Candidat B")
+        submit_mb = st.form_submit_button("Lancer la joute")
+        if submit_mb and q_mb and a_mb and b_mb:
+            joute = engine.joute_mbomo(q_mb, a_mb, b_mb)
+            output = f"🌀 JOUTE MBOMO\n{'━'*50}\nQuestion: {q_mb}\n\n"
+            output += f"Candidat A: {a_mb[:100]}... (score: {joute.candidat_a.score:.3f})\n"
+            output += f"Candidat B: {b_mb[:100]}... (score: {joute.candidat_b.score:.3f})\n"
+            output += f"\n🏆 Vainqueur: {'A' if joute.vainqueur == 'a' else 'B'}\n"
+            output += f"Arbitre: {joute.arbitre}"
+            st.code(output, language="text")
+
+# Status
+if st.button("📊 Statut complet"):
+    stat = engine.statut_spiral()
+    output = "📊 STATUT COMPLET\n" + "━"*50 + "\n"
+    for k, v in stat.items():
+        output += f"{k}: {v}\n"
+    output += "\n🌀 Bulong tchengl bwa tchengl"
+    st.code(output, language="text")
+
+st.markdown("---")
+st.caption("🌀 TTU-MC³ · Algorithme Cognitif Bantu (Nzèbi B52) · Temps Spiralé")
+st.caption("« Bulong tchengl bwa tchengl » — La Terre est un tournoiement perpétuel.")
